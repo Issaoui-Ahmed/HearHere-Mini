@@ -1,35 +1,41 @@
 
-
+// ContentView.swift
 import SwiftUI
 import MapKit
 import CoreLocation
+import SwiftData
 
 struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
-    @StateObject private var store = DropStore()
     @StateObject private var player = PlaybackManager()
+
+    @Environment(\.modelContext) private var modelContext
+
+    // Live collection of drops from SwiftData (and hence CloudKit)
+    @Query(sort: \AudioDrop.createdAt, order: .reverse)
+    private var drops: [AudioDrop]
 
     @State private var showRecorder = false
     @State private var cameraPosition: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var selectedDrop: AudioDrop?
 
-    // Choose how far to surface pins in the current viewport/user area
-    private let nearbyRadius: CLLocationDistance = 500 // meters
+    private let nearbyRadius: CLLocationDistance = 500 // still available if you need it
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            if #available(iOS 17.0, *) {
+            ZStack(alignment: .bottom) {
                 Map(position: $cameraPosition) {
                     UserAnnotation()
 
-                    // Render pins for all drops (simple)
-                    ForEach(store.drops) { drop in
+                    ForEach(drops) { drop in
                         Annotation("", coordinate: drop.coordinate) {
                             Button {
-                                selectedDrop = drop
-                                if let url = urlFor(drop) {
-                                    player.play(fileURL: url)
+                                guard let data = drop.audioData else {
+                                    print("No audio data stored for this drop")
+                                    return
                                 }
+
+                                selectedDrop = drop
+                                player.play(data: data)
                             } label: {
                                 Image(systemName: "mappin.circle.fill")
                                     .font(.title2)
@@ -39,12 +45,6 @@ struct ContentView: View {
                     }
                 }
                 .ignoresSafeArea()
-            } else {
-                // iOS 16 fallback map (no cameraPosition API)
-                LegacyMapView()
-            }
-
-            // Floating Record button
             Button {
                 showRecorder = true
             } label: {
@@ -70,12 +70,28 @@ struct ContentView: View {
                     return
                 }
 
-                store.add(resultURL: result.fileURL, duration: result.duration, at: loc)
-                print("✅ Added drop at", loc)
+                do {
+                    // Turn the recorded file into Data for SwiftData/CloudKit.
+                    let data = try Data(contentsOf: result.fileURL)
+
+                    let drop = AudioDrop(
+                        latitude: loc.latitude,
+                        longitude: loc.longitude,
+                        durationSec: result.duration,
+                        audioData: data
+                    )
+                    modelContext.insert(drop)
+
+                    print("✅ Added drop at", loc)
+
+                    // (Optional) Delete the temp file if you don’t need it anymore.
+                    try? FileManager.default.removeItem(at: result.fileURL)
+                } catch {
+                    print("Failed to load audio data:", error)
+                }
             }
             .presentationDetents([.height(260), .medium])
         }
-        // Optional mini “now playing” banner
         .overlay(alignment: .top) {
             if let drop = selectedDrop {
                 Text("Playing drop • \(Int(drop.durationSec))s")
@@ -84,21 +100,5 @@ struct ContentView: View {
                     .padding(.top, 10)
             }
         }
-    }
-
-    private func urlFor(_ drop: AudioDrop) -> URL? {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent(drop.filename)
-    }
-}
-
-private struct LegacyMapView: View {
-    @State private var region = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
-        span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-    )
-    var body: some View {
-        Map(coordinateRegion: $region, showsUserLocation: true)
-            .ignoresSafeArea()
     }
 }
