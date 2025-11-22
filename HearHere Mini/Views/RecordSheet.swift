@@ -5,6 +5,7 @@ import AVFoundation
 struct RecordSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var rec = RecordingManager()
+    @State private var lastResult: RecordingResult?
 
     let onComplete: (RecordingResult?) -> Void
 
@@ -34,13 +35,14 @@ struct RecordSheet: View {
             case .granted:
                 if rec.isRecording {
                     Button {
-                        _ = rec.stop()
+                        lastResult = rec.stop()
                     } label: {
                         Label("Stop", systemImage: "stop.circle.fill").font(.title2)
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button {
+                        lastResult = nil
                         _ = rec.start(maxDuration: 30)
                     } label: {
                         Label("Record", systemImage: "record.circle.fill").font(.title2)
@@ -51,12 +53,20 @@ struct RecordSheet: View {
                         HStack {
                             Button("Discard") {
                                 rec.discard()
+                                lastResult = nil
                                 onComplete(nil)
                                 dismiss()
                             }
                             Button("Use Recording") {
-                                let result = rec.stop()
-                                onComplete(result)
+                                let result = lastResult ?? rec.stop()
+                                lastResult = result
+
+                                if let result {
+                                    onComplete(result)
+                                } else {
+                                    onComplete(nil)
+                                }
+
                                 dismiss()
                             }
                             .buttonStyle(.borderedProminent)
